@@ -221,6 +221,7 @@
             <option value="code">By error code</option>
           </select>
           <select id="bValue"></select>
+          <button class="btn" id="bkDownload" type="button"><span>&#10515;</span> Download CSV</button>
         </div>
       </div>
       <div class="card-b bk" id="bkBody"></div>
@@ -442,7 +443,7 @@ function render(a){
 /* ============================================================
    State + filters
    ============================================================ */
-let RECORDS=[], CURRENT=[];
+let RECORDS=[], CURRENT=[], BK={mode:"",val:"",items:[]};
 function currentFilter(){
   return { from:$("fFrom").value, to:$("fTo").value, org:$("fOrg").value,
     code:$("fCode").value, status:$("fStatus").value, q:($("fSearch").value||"").trim().toLowerCase() };
@@ -478,6 +479,7 @@ function renderBreakdown(){
   const mode=$("bMode").value==="code"?"code":"endpoint";
   const val=$("bValue").value;
   const body=$("bkBody");
+  BK={mode:mode,val:val,items:[]};
   if(!val){ body.innerHTML='<div class="empty">No data — adjust filters or load a file.</div>'; return; }
   const otherKey=mode==="code"?"endpoint":"code";
   const m=new Map();
@@ -489,6 +491,7 @@ function renderBreakdown(){
     cur.value++; m.set(key,cur);
   });
   const items=Array.from(m.values()).sort((a,b)=>b.value-a.value);
+  BK.items=items;
   if(!items.length){ body.innerHTML='<div class="empty">No messages for this selection.</div>'; return; }
   const max=Math.max.apply(null, items.map(i=>i.value).concat([1]));
   const total=items.reduce((s,i)=>s+i.value,0);
@@ -501,6 +504,30 @@ function renderBreakdown(){
       '<div class="bar-track"><div class="bar-fill" data-w="'+w+'" style="--c:var(--warn)"></div></div></div>';
   }).join("");
   requestAnimationFrame(()=>{ body.querySelectorAll(".bar-fill").forEach(f=>{ void f.offsetWidth; f.style.width=(f.dataset.w||0)+"%"; }); });
+}
+function csvCell(v){ v=String(v==null?"":v); return /[",\r\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+function buildBreakdownCSV(){
+  if(!BK.items || !BK.items.length) return null;
+  const mode=BK.mode, val=BK.val;
+  const total=BK.items.reduce((s,i)=>s+i.value,0)||1;
+  const groupLabel = mode==="code" ? "Error Code" : "Endpoint";
+  const otherLabel = mode==="code" ? "Endpoint" : "Error Code";
+  const rows=[[groupLabel,"Error Message",otherLabel,"Count","Percent"]];
+  BK.items.forEach(it=>rows.push([val, it.message, it.other, it.value, (it.value/total*100).toFixed(1)]));
+  return rows.map(r=>r.map(csvCell).join(",")).join("\r\n");
+}
+function downloadBreakdownCSV(){
+  const bodyCsv=buildBreakdownCSV();
+  if(bodyCsv==null){ toast("Nothing to download yet — pick an endpoint or code first."); return; }
+  const csv="\ufeff"+bodyCsv;
+  const safe=String(BK.val).replace(/[^a-zA-Z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,60) || "all";
+  const fname="blostem-"+(BK.mode==="code"?"code":"endpoint")+"-"+safe+"-messages.csv";
+  const blob=new Blob([csv], {type:"text/csv;charset=utf-8;"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=fname; document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+  toast("Downloaded "+fname);
 }
 function setupFilters(recs){
   const dates=recs.map(r=>r.date).filter(Boolean).sort();
@@ -559,6 +586,7 @@ $("fSearch").addEventListener("input", applyFilters);
 $("fReset").addEventListener("click", ()=>{ setupFilters(RECORDS); applyFilters(); });
 $("bMode").addEventListener("change", ()=>{ populateBValue(); renderBreakdown(); });
 $("bValue").addEventListener("change", renderBreakdown);
+$("bkDownload").addEventListener("click", downloadBreakdownCSV);
 document.addEventListener("click", e=>{
   const d=e.target.closest(".bar-row.drill"); if(!d) return;
   $("bMode").value=d.getAttribute("data-mode");
